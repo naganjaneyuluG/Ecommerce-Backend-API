@@ -1,0 +1,98 @@
+version: '3.9'
+
+services:
+  # ─── API Server ──────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder        # use builder stage for dev (has devDeps)
+    container_name: ecommerce_api
+    restart: unless-stopped
+    ports:
+      - '${PORT:-5000}:5000'
+    environment:
+      NODE_ENV: development
+      PORT: 5000
+      MONGODB_URI: mongodb://mongo:27017/ecommerce_dev
+      REDIS_URL: redis://redis:6379
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src:ro      # mount source for hot-reload
+    command: npm run dev
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ecommerce_net
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:5000/health']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─── MongoDB ─────────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    container_name: ecommerce_mongo
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - ecommerce_net
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ─── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: ecommerce_redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - ecommerce_net
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ─── Mongo Express (Dev UI) ──────────────────────────────────────────────────
+  mongo-express:
+    image: mongo-express:latest
+    container_name: ecommerce_mongo_express
+    restart: unless-stopped
+    ports:
+      - '8081:8081'
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017/
+      ME_CONFIG_BASICAUTH: 'false'
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - ecommerce_net
+    profiles:
+      - dev-tools
+
+volumes:
+  mongo_data:
+  redis_data:
+
+networks:
+  ecommerce_net:
+    driver: bridge
